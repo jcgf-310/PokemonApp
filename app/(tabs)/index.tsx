@@ -1,98 +1,194 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import axios from "axios";
+import { useRouter } from "expo-router";
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  Animated,
+  Easing,
+  FlatList,
+  Image,
+  RefreshControl,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
-
-export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
-
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
-  );
+interface Pokemon {
+  name: string;
+  url: string;
+  image: string;
+  types: string[];
 }
 
-const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
-});
+const CACHE_KEY = "pokemon_cache";
+const CACHE_TIMESTAMP_KEY = "pokemon_cache_timestamp";
+const CACHE_DURATION = 24 * 60 * 60 * 1000;
+
+export default function PokemonList() {
+  const [pokemonList, setPokemonList] = useState<Pokemon[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const rotateValue = new Animated.Value(0);
+  const router = useRouter();
+
+  const startRotation = () => {
+    Animated.loop(
+      Animated.timing(rotateValue, {
+        toValue: 1,
+        duration: 1000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+  };
+
+  const rotation = rotateValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
+  const fetchPokemon = useCallback(
+    async (refresh = false) => {
+      try {
+        setLoading(true);
+        setError("");
+        const timestamp = await AsyncStorage.getItem(CACHE_TIMESTAMP_KEY);
+        const cachedData = await AsyncStorage.getItem(CACHE_KEY);
+        const now = Date.now();
+
+        if (
+          !refresh &&
+          cachedData &&
+          timestamp &&
+          now - parseInt(timestamp) < CACHE_DURATION
+        ) {
+          setPokemonList(JSON.parse(cachedData));
+          setLoading(false);
+          return;
+        }
+
+        const response = await axios.get(
+          `https://pokeapi.co/api/v2/pokemon?limit=20&offset=${offset}`
+        );
+        const results = await Promise.all(
+          response.data.results.map(async (pokemon: any) => {
+            const detail = await axios.get(pokemon.url);
+            return {
+              name: pokemon.name,
+              url: pokemon.url,
+              image: detail.data.sprites.front_default,
+              types: detail.data.types.map((t: any) => t.type.name),
+            };
+          })
+        );
+
+        const newList = refresh ? results : [...pokemonList, ...results];
+        setPokemonList(newList);
+        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(newList));
+        await AsyncStorage.setItem(CACHE_TIMESTAMP_KEY, now.toString());
+      } catch (err) {
+        setError("Failed to load Pokémon data");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [offset]
+  );
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    setOffset(0);
+    await fetchPokemon(true);
+    setRefreshing(false);
+  };
+
+  useEffect(() => {
+    startRotation();
+    fetchPokemon();
+  }, [offset]);
+
+  const renderItem = ({ item }: { item: Pokemon }) => (
+    <TouchableOpacity
+      onPress={() =>
+        router.push({
+          pathname: "/pokemon-details",
+          params: { name: item.name },
+        })
+      }
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        padding: 10,
+        backgroundColor: "#f9f9f9",
+        marginVertical: 5,
+        borderRadius: 8,
+      }}
+    >
+      <Image
+        source={{ uri: item.image }}
+        style={{ width: 60, height: 60, marginRight: 15 }}
+      />
+      <View>
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "bold",
+            textTransform: "capitalize",
+          }}
+        >
+          {item.name}
+        </Text>
+        <Text style={{ color: "gray" }}>{item.types.join(", ")}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+
+  if (loading && pokemonList.length === 0) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "white",
+        }}
+      >
+        <Animated.Image
+          source={require("@/assets/pokeball.png")}
+          style={{ width: 100, height: 100, transform: [{ rotate: rotation }] }}
+        />
+        <Text
+          style={{
+            marginTop: 10,
+            fontSize: 16,
+            color: "#E3350D",
+            fontWeight: "bold",
+          }}
+        >
+          Loading Pokémon...
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ flex: 1, padding: 15, backgroundColor: "white" }}>
+      {error ? (
+        <Text style={{ color: "red", textAlign: "center" }}>{error}</Text>
+      ) : (
+        <FlatList
+          data={pokemonList}
+          keyExtractor={(item) => item.name}
+          renderItem={renderItem}
+          onEndReached={() => setOffset((prev) => prev + 20)}
+          onEndReachedThreshold={0.5}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        />
+      )}
+    </View>
+  );
+}
