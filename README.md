@@ -4,8 +4,8 @@
 
 Below is a screenshot of the Pokémon list displayed in the app:
 
-![Pokémon List Screenshot](assets/pokemon-list.png)
-(assets/pokemon-list 1.png)
+![Pokémon List Screenshot 1](assets/pokemon-list.png)
+![Pokémon List Screenshot 2](assets/pokemon-list%201.png)
 
 ### 🧩 API Integration Note
 
